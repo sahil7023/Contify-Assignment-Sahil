@@ -1,0 +1,86 @@
+# site.yml
+---
+- name: Configure Django Application Server
+  hosts: app_servers
+  become: yes
+  vars:
+    app_name: django-app
+    app_user: django
+    app_group: django
+    app_home: /opt/django-app
+    venv_path: /opt/django-app/venv
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      apt:
+        name:
+          - python3-pip
+          - python3-venv
+          - nginx
+          - postgresql-client
+          - supervisor
+        state: present
+
+    - name: Create application user
+      user:
+        name: "{{ app_user }}"
+        group: "{{ app_group }}"
+        system: yes
+        createhome: yes
+        home: "{{ app_home }}"
+
+    - name: Create virtual environment
+      command:
+        cmd: python3 -m venv {{ venv_path }}
+        creates: "{{ venv_path }}"
+
+    - name: Install Python packages
+      pip:
+        requirements: "{{ app_home }}/requirements.txt"
+        virtualenv: "{{ venv_path }}"
+
+    - name: Configure Nginx
+      template:
+        src: templates/nginx.conf.j2
+        dest: /etc/nginx/sites-available/{{ app_name }}
+      notify: restart nginx
+
+    - name: Enable Nginx site
+      file:
+        src: /etc/nginx/sites-available/{{ app_name }}
+        dest: /etc/nginx/sites-enabled/{{ app_name }}
+        state: link
+      notify: restart nginx
+
+    - name: Configure Gunicorn
+      template:
+        src: templates/gunicorn.service.j2
+        dest: /etc/systemd/system/gunicorn.service
+      notify: restart gunicorn
+
+    - name: Start and enable Gunicorn
+      systemd:
+        name: gunicorn
+        state: started
+        enabled: yes
+
+    - name: Configure log rotation
+      template:
+        src: templates/logrotate.conf.j2
+        dest: /etc/logrotate.d/{{ app_name }}
+
+  handlers:
+    - name: restart nginx
+      service:
+        name: nginx
+        state: restarted
+
+    - name: restart gunicorn
+      systemd:
+        name: gunicorn
+        state: restarted
